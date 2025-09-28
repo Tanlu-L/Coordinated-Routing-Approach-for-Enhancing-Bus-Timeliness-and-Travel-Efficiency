@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- generated on 2025-09-21 23:19:41 by Eclipse SUMO netedit Version 1.20.0
+-->
+
+<routes xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://sumo.dlr.de/xsd/routes_file.xsd">
+    <!-- VTypes -->
+    <vType id="DEFAULT_VEHTYPE" vClass="bus"/>
+    <vType id="t_0" vClass="taxi"/>
+    <vType id="t_1" vClass="bus"/>
+    <vType id="t_2"/>
+    <!-- Routes -->
+    <route id="r_bus" edges="502795544#0 502795544#1 502795544#2 502795946#0 502795946#1 502795946#2 502795946#3 502795946#4 502795946#5 502795946#6 502795946#7 502795943#0 502795943#1 502795943#2 527857414#0 527857414#1 527857414#2 527857414#3 527857410#0 527857410#1"/>
+    <!-- Vehicles, persons and containers (sorted by depart) -->
+    <flow id="f_1" type="t_0" begin="0.00" color="255,0,9" from="502795544#0" to="1120512276#0" end="10800.00" vehsPerHour="500"/>
+    <flow id="f_2" type="t_2" begin="0.00" color="0,110,255" from="502795544#0" to="1120512276#1" end="10800.00" vehsPerHour="1200"/>
+    <flow id="f_0" type="t_1" begin="3600.00" route="r_bus" end="7200.00" vehsPerHour="10">
+        <stop busStop="bs_0" duration="60.00"/>
+        <stop busStop="bs_2" duration="60.00"/>
+        <stop busStop="bs_1" duration="60.00"/>
+    </flow>
+</routes>
