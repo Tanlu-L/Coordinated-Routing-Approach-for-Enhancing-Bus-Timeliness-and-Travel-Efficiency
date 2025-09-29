@@ -624,524 +624,267 @@ def run(args):
 
     print("Done.")
 
-
-# Plot
-# Figure 5-7
-import pandas as pd
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-
-
-# add path BASE_DIR = os.path.expanduser()
-CASE_DIRS = {
-    "Case 1": os.path.join(BASE_DIR, "srp_no DL"),  
-    "Case 2": os.path.join(BASE_DIR, "srp_DL"),
-    "Case 3": os.path.join(BASE_DIR, "drp"),
-    "Case 4": os.path.join(BASE_DIR, "proposed"),
-}
-PER_FILE = "per_vehicle.csv"
-
-# styling
-mpl.rcParams.update({
-    "font.size": 8,
-    "axes.labelsize": 6,
-    "xtick.labelsize": 6,
-    "ytick.labelsize": 6,
-    "legend.fontsize": 9,
-    "axes.linewidth": 0.6,
-})
-LINEWIDTH = 1.4
-
-X_LABEL_TEXT = "Time [s]"
-Y_LABEL_TEXT = {
-    "bus": "Cumulative delay [min]", 
-    "cav": "Total travel time [min]",
-    "reg": "Total travel time [min]",
-}
-FONT_LABEL = 14
-FONT_TICK  = 12
-
-LEGEND_LOC = "upper left"
-LEGEND_FONTSIZE = 10
-LEGEND_FRAME = True
-CASE_COLORS = {
-    "Case 2": "tab:orange",
-    "Case 3": "tab:green",
-    "Case 4": "tab:blue",
-}
-CASE_LABELS = {
-    "Case 2": "SRP withou rerouting",
-    "Case 4": "DRP with rerouting",
-    "Case 3": "Proposed method",
-    
-}
-
-XTICK_STEP = 600.0
-YTICK_STEP_BUS = 2.0
-YTICK_STEP_DEFAULT = None  
-GRID_DT = 1.0                 
-DELTA_CLAMP_ZERO = True       
-SMOOTH_WINDOW_S  = 15.0    
-AMPLIFY_CASE3    = 1.5       
-Y_MAX_BUS        = None      
-DELTA_MONOTONE_ENVELOPE = True
-
-def load_case_df(case_name, folder):
-    p = os.path.join(folder, PER_FILE)
-    if not os.path.isfile(p):
-        print(f"[WARN] Missing per_vehicle.csv for {case_name}: {p}")
-        return None
     try:
-        return pd.read_csv(p)
+        generate_plots(args)
     except Exception as e:
-        print(f"[WARN] Could not read {p}: {e}")
-        return None
+        print("Plotting error:", e)
 
-def evenly_spaced_subset(sorted_df, N):
-    if len(sorted_df) <= N:
-        return sorted_df.copy()
-    idxs = np.linspace(0, len(sorted_df) - 1, N, dtype=int)
-    return sorted_df.iloc[idxs, :].copy()
-
-def step_at(times, values, t_query):
-    idx = np.searchsorted(times, t_query, side="right") - 1
-    return 0.0 if idx < 0 else values[idx]
-
-def to_uniform_grid(times, values, dt=GRID_DT):
-    grid = np.arange(T_START, T_END + 1e-9, dt)
-    vals = np.array([step_at(times, values, g) for g in grid])
-    return grid, vals
-
-def cumulative_series(df_sub, value_col):
-    d = df_sub.sort_values("arrive_s").copy()
-    t = [T_START]; y = [0.0]; acc = 0.0
-    for tt, val_s in zip(d["arrive_s"].values, d[value_col].values):
-        if tt < T_START or tt > T_END:
-            continue
-        acc += val_s / 60.0
-        t.append(tt); y.append(acc)
-    if t[-1] < T_END:
-        t.append(T_END); y.append(acc)
-    return np.array(t), np.array(y)
-
-def moving_average(y, win_pts):
-    if win_pts <= 1:
-        return y
-    c = np.cumsum(np.insert(y, 0, 0.0))
-    ma = (c[win_pts:] - c[:-win_pts]) / float(win_pts)
-    pad = np.full(win_pts-1, ma[0] if len(ma) else 0.0)
-    return np.concatenate([pad, ma])
-
-def balance_across_cases(dfs, vehicle_class):
-    per_case = {}
-    for cname, df in dfs.items():
-        if df is None: continue
-        need = {"veh","class","arrive_s","delay_s","travel_s"}
-        if not need.issubset(df.columns): continue
-        sub = df[(df["class"]==vehicle_class) &
-                 (df["arrive_s"]>=T_START) & (df["arrive_s"]<=T_END)].sort_values("arrive_s").copy()
-        if len(sub)>0:
-            per_case[cname]=sub
-    if not per_case:
-        return {}, 0
-    N = min(len(d) for d in per_case.values())
-    return {c: evenly_spaced_subset(d, N) for c,d in per_case.items()}, N
-
-def apply_tick_spacing(ax, xtick_step, ytick_step):
-    if xtick_step is not None and xtick_step > 0:
-        ax.set_xticks(np.arange(X_MIN, X_MAX + 1e-9, xtick_step))
-    if ytick_step is not None and ytick_step > 0:
-        lo, hi = ax.get_ylim()
-        ax.set_yticks(np.arange(max(0.0, lo), hi + 1e-9, ytick_step))
-
-# Bus
-def plot_bus_delta_travel_time(dfs_raw):
-    if dfs_raw.get("Case 1") is None:
-        print("[INFO] Missing Case 1 baseline; skipping BUS plot.")
-        return
-
-    series = {}
-    for cname, df in dfs_raw.items():
-        if df is None: 
-            continue
-        need = {"veh","class","arrive_s","travel_s"}
-        if not need.issubset(df.columns):
-            continue
-        sub = df[(df["class"]=="bus") &
-                 (df["arrive_s"]>=T_START) & (df["arrive_s"]<=T_END)].sort_values("arrive_s").copy()
-        if len(sub)==0:
-            continue
-        t, y = cumulative_series(sub, value_col="travel_s")
-        tg, yg = to_uniform_grid(t, y, GRID_DT)
-        series[cname] = (tg, yg)
-
-    if "Case 1" not in series:
-        print("[INFO] Case 1 has no BUS data in window; skipping BUS plot.")
-        return
-
-    tg = series["Case 1"][0]
-    y1 = series["Case 1"][1]
-
-    fig, ax = plt.subplots(figsize=FIGSIZE, dpi=DPI)
-
-    for cname in ["Case 2", "Case 4", "Case 3"]:
-        if cname not in series:
-            continue
-        y = series[cname][1] - y1 
-        if cname == "Case 3" and AMPLIFY_CASE3 != 1.0:
-            y *= AMPLIFY_CASE3
-        if DELTA_CLAMP_ZERO:
-            y = np.maximum(0.0, y)
-        if SMOOTH_WINDOW_S and SMOOTH_WINDOW_S > 0:
-            win_pts = max(1, int(round(SMOOTH_WINDOW_S / GRID_DT)))
-            y = moving_average(y, win_pts)
-        if DELTA_MONOTONE_ENVELOPE:
-            y = np.maximum.accumulate(y)
-
-        ax.plot(
-            tg - T_START, y,
-            color=CASE_COLORS.get(cname, None),
-            linewidth=LINEWIDTH,
-            label=CASE_LABELS.get(cname, cname),
-        )
-
-    ax.set_xlim(X_MIN, X_MAX)
-    if Y_MAX_BUS is not None:
-        ax.set_ylim(0, Y_MAX_BUS)
-    else:
-        lo, hi = ax.get_ylim()
-        ax.set_ylim(0, hi)
-    ax.set_xlabel(X_LABEL_TEXT, fontsize=FONT_LABEL)
-    ax.set_ylabel(Y_LABEL_TEXT["bus"], fontsize=FONT_LABEL)
-    ax.tick_params(axis="both", labelsize=FONT_TICK)
-    apply_tick_spacing(ax, XTICK_STEP, YTICK_STEP_BUS)
-    ax.legend(loc=LEGEND_LOC, fontsize=LEGEND_FONTSIZE, frameon=LEGEND_FRAME)
-    for spine in ("top","right"): ax.spines[spine].set_visible(True)
-    plt.show()
-
-# CAV/HV
-def plot_total_tt(dfs_raw, vehicle_class):
-    balanced, _ = balance_across_cases(dfs_raw, vehicle_class)
-    if not balanced:
-        print(f("[INFO] No data for '{vehicle_class}' in window; skipping."))
-        return
-
-    fig, ax = plt.subplots(figsize=FIGSIZE, dpi=DPI)
-    for cname in ["Case 2", "Case 4", "Case 3"]: 
-        if cname not in balanced:
-            continue
-        t, y = cumulative_series(balanced[cname], value_col="travel_s")
-        tg, yg = to_uniform_grid(t, y, GRID_DT)
-        ax.plot(tg - T_START, yg,
-                color=CASE_COLORS.get(cname, None),
-                linewidth=LINEWIDTH, label=CASE_LABELS.get(cname, cname))
-
-    ax.set_xlim(X_MIN, X_MAX)
-    lo, hi = ax.get_ylim()
-    ax.set_ylim(0, hi)
-    ax.set_xlabel(X_LABEL_TEXT, fontsize=FONT_LABEL)
-    ax.set_ylabel(Y_LABEL_TEXT[vehicle_class], fontsize=FONT_LABEL)
-    ax.tick_params(axis="both", labelsize=FONT_TICK)
-    apply_tick_spacing(ax, XTICK_STEP, YTICK_STEP_DEFAULT)
-    ax.legend(loc=LEGEND_LOC, fontsize=LEGEND_FONTSIZE, frameon=LEGEND_FRAME)
-    for spine in ("top","right"): ax.spines[spine].set_visible(True)
-    plt.show()
-
-dfs_raw = {name: load_case_df(name, folder) for name, folder in CASE_DIRS.items()}
-if not any(df is not None for df in dfs_raw.values()):
-    raise FileNotFoundError("No per_vehicle.csv found under the configured folders.")
-
-plot_bus_delta_travel_time(dfs_raw)  
-plot_total_tt(dfs_raw, "cav")      
-plot_total_tt(dfs_raw, "reg")      
-
-
-#Figure 8&9
-# add path BASE_DIR   = os.path.expanduser()
-UNITS = "min"
-LABELS_BY_STOP = {"x": "",           "y": "Average delay [min]"}
-LABELS_BY_BUS  = {"x": "Bus Index",  "y": "Cumulative delay [min]"}
-
-STOP_LABEL_MAP = {"bs_0":"Station 1","bs_1":"Station 2","bs_2":"Station 3"}
-BUS_LABEL_MAP  = {"f_0.0":"1","f_0.1":"2","f_0.2":"3","f_0.3":"4","f_0.4":"5","f_0.5":"6","f_0.6":"7","f_0.7":"8","f_0.8":"9","f_0.9":"10"}
-AXIS_LABEL_SIZE, X_TICK_LABEL_SIZE, Y_TICK_LABEL_SIZE = 14, 12, 12
-LEGEND_FONT_SIZE, VALUE_FONT_SIZE = 13, 11
-SHOW_VALUES = True
-ANNOTATE_MIN_VALUE = 0.0       
-VALUE_FORMAT = "{:.1f}"       
-Y_TICK_INT_BY_STOP = None
-Y_TICK_INT_BY_BUS  = None
-CLIP_NEG_TO_ZERO = True
-BAR_WIDTH_BY_STOP = 0.34
-BAR_WIDTH_BY_BUS  = 0.44       
-Y_RANGE_BY_STOP = (0, 5)
-Y_RANGE_BY_BUS  = (0, 30)
-LEGEND_NAME = {"case2": "SRP using joint DL", "case3": "Proposed method"}
-COLOR_BY_STOP = {"case2": "dcdbee", "case3": "9d99c7"}
-COLOR_BY_BUS  = {"case2": "cfeadf", "case3": "4d7e54"}
-
-FIG_RIGHT_MARGIN = 0.82
-FIGSIZE = (7, 5)
-
-def _normalize_hex(c):
-    if c is None: return None
-    c = str(c).lstrip("#")
-    if len(c) < 6: c = c.zfill(6)
-    return "#"+c[:6]
-
-def _to_units(series_seconds):
-    if UNITS.lower().startswith("min"):
-        return series_seconds / 60.0, "min"
-    return series_seconds, "s"
-
-def _order_stops(stops):
-    def key(s):
-        m = re.search(r"(\d+)$", str(s))
-        return int(m.group(1)) if m else 10**9
-    return sorted(stops, key=key)
-
-def _order_buses(buses):
-    def key(s):
-        m = re.search(r"(\d+(\.\d+)?)$", str(s))
-        return (float(m.group(1)) if m else 10**9, str(s))
-    return sorted(buses, key=key)
-
-def load_cases_from_excel_wide(base_dir, filename):
-    fp = os.path.join(base_dir, filename)
-    if not os.path.exists(fp):
-        raise FileNotFoundError(f"Excel file not found: {fp}")
-
-    df0 = pd.read_excel(fp, sheet_name=0)
-
-    expected = [
-        ("veh1","stop1","arrival_1"),
-        ("veh2","stop2","arrival_2"),
-        ("veh3","stop3","arrival_3"),
-    ]
-    cols_lower = {c.lower(): c for c in df0.columns}
-    triplets = []
-    for v,s,a in expected:
-        lv, ls, la = v.lower(), s.lower(), a.lower()
-        if lv not in cols_lower or ls not in cols_lower or la not in cols_lower:
-            raise ValueError(
-                "Expected wide columns: "
-                "'veh1, stop1, arrival_1, veh2, stop2, arrival_2, veh3, stop3, arrival_3'. "
-                f"Missing any of: {v}, {s}, {a}."
-            )
-        triplets.append((cols_lower[lv], cols_lower[ls], cols_lower[la]))
-
-    def mk_case(df, triplet):
-        vcol, scol, acol = triplet
-        out = df[[vcol, scol, acol]].copy()
-        out.columns = ["veh_id", "stop_id", "arrival_s"]
-        return out
-
-    cases = {
-        "case1": mk_case(df0, triplets[0]).assign(case=1),
-        "case2": mk_case(df0, triplets[1]).assign(case=2),
-        "case3": mk_case(df0, triplets[2]).assign(case=3),
-    }
-    return cases
-
-# Plot
-def compute_delays(cases):
-    base = cases["case1"].rename(columns={"arrival_s":"arrival_s_base"})
-    out_stop, out_bus = {}, {}
-    for cx in ("case2","case3"):
-        cur = cases[cx].rename(columns={"arrival_s":"arrival_s_new"})
-        merged = pd.merge(base, cur, on=["veh_id","stop_id"], how="inner")
-        merged["delay_s"] = merged["arrival_s_new"] - merged["arrival_s_base"]
-        if CLIP_NEG_TO_ZERO:
-            merged["delay_s"] = merged["delay_s"].clip(lower=0.0)
-        out_stop[cx] = merged.groupby("stop_id")["delay_s"].sum()
-        out_bus[cx]  = merged.groupby("veh_id")["delay_s"].sum()
-
-    delay_by_stop = pd.concat(out_stop, axis=1).fillna(0.0)
-    delay_by_bus  = pd.concat(out_bus,  axis=1).fillna(0.0)
-    delay_by_stop = delay_by_stop.loc[_order_stops(delay_by_stop.index)]
-    delay_by_bus  = delay_by_bus.loc[_order_buses(delay_by_bus.index)]
-    return delay_by_stop, delay_by_bus
-
-def _apply_y_ticks(ax, tick_interval):
-    if tick_interval is not None:
-        ax.yaxis.set_major_locator(MultipleLocator(tick_interval))
-
-def _annotate_bars(ax, rects, values):
-    for r, v in zip(rects, values):
-        if v >= ANNOTATE_MIN_VALUE and SHOW_VALUES:
-            ax.text(r.get_x()+r.get_width()/2, r.get_height(),
-                    VALUE_FORMAT.format(v), ha="center", va="bottom",
-                    fontsize=VALUE_FONT_SIZE)
-
-def _rename_index(idx, mapping):
-    return [mapping.get(x, x) for x in idx]
-
-def _barplot_two_series(df, xlabel, ylabel, y_tick_interval=None,
-                        xtick_map=None, y_range=None, bar_width=0.38,
-                        color_map=None):
-    idx = np.arange(len(df.index))
-    fig, ax = plt.subplots(figsize=FIGSIZE)
-
-    case2_vals, _ = _to_units(df["case2"])
-    case3_vals, _ = _to_units(df["case3"])
-
-    r1 = ax.bar(idx - bar_width/2, case2_vals.values, width=bar_width,
-                label=LEGEND_NAME.get("case2","case2"),
-                color=_normalize_hex((color_map or {}).get("case2")))
-    r2 = ax.bar(idx + bar_width/2, case3_vals.values, width=bar_width,
-                label=LEGEND_NAME.get("case3","case3"),
-                color=_normalize_hex((color_map or {}).get("case3")))
-
-    ylabel = re.sub(r"\[.*?\]", "[min]" if UNITS.lower().startswith("min") else "[s]", ylabel)
-    ax.set_xlabel(xlabel, fontsize=AXIS_LABEL_SIZE)
-    ax.set_ylabel(ylabel, fontsize=AXIS_LABEL_SIZE)
-
-    shown_index = _rename_index(df.index, xtick_map or {})
-    ax.set_xticks(idx)
-    ax.set_xticklabels(shown_index, fontsize=X_TICK_LABEL_SIZE)
-
-    ymin = 0 if y_range is None or y_range[0] is None else y_range[0]
-    ymax = None if y_range is None else y_range[1]
-    ax.set_ylim(bottom=max(0, ymin)) if ymax is None else ax.set_ylim(max(0, ymin), ymax)
-
-    ax.tick_params(axis="y", labelsize=Y_TICK_LABEL_SIZE)
-    _apply_y_ticks(ax, y_tick_interval)
-    ax.grid(False)
-
-    ax.legend(fontsize=LEGEND_FONT_SIZE, loc="upper right",
-              bbox_to_anchor=(0.99, 0.99), frameon=False)
-
-    _annotate_bars(ax, r1, case2_vals.values)
-    _annotate_bars(ax, r2, case3_vals.values)
-
-    plt.subplots_adjust(right=FIG_RIGHT_MARGIN)
-    plt.tight_layout()
-    plt.show()
-# Run
-cases = load_cases_from_excel_wide(BASE_DIR, EXCEL_FILE)
-delay_by_stop_s, delay_by_bus_s = compute_delays(cases)
-
-# 1) per STATION
-_barplot_two_series(
-    delay_by_stop_s / 10.0,           
-    xlabel=LABELS_BY_STOP["x"],
-    ylabel=LABELS_BY_STOP["y"],
-    y_tick_interval=Y_TICK_INT_BY_STOP,
-    xtick_map=STOP_LABEL_MAP,
-    y_range=Y_RANGE_BY_STOP,
-    bar_width=BAR_WIDTH_BY_STOP,
-    color_map=COLOR_BY_STOP
-)
-
-# 2) per BUS
-_barplot_two_series(
-    delay_by_bus_s,
-    xlabel=LABELS_BY_BUS["x"],
-    ylabel=LABELS_BY_BUS["y"],
-    y_tick_interval=Y_TICK_INT_BY_BUS,
-    xtick_map=BUS_LABEL_MAP,
-    y_range=Y_RANGE_BY_BUS,
-    bar_width=BAR_WIDTH_BY_BUS,  
-    color_map=COLOR_BY_BUS
-)
-
-#Figure 11
-SCENARIOS = [
-    ("results_case1", "SRP without using joint DL"),
-    ("results_case2", "SRP using joint DL"),
-    ("results_case3", "Proposed method"),
-]
-
-RUN_SUMMARY_FILE = "run_summary.csv"
-def _to_units(vals_in_seconds):
-    vals = np.asarray(vals_in_seconds, dtype=float)
-    if UNITS.lower().startswith("min"):
-        return vals / 60.0, "min"
-    return vals, "s"
-
-def _apply_y_ticks(ax, tick_interval):
-    if tick_interval is not None:
-        ax.yaxis.set_major_locator(MultipleLocator(tick_interval))
-
-def _annotate_bars(ax, rects, values):
-    for r, v in zip(rects, values):
-        if SHOW_VALUES and pd.notna(v) and v >= ANNOTATE_MIN_VALUE:
-            ax.text(r.get_x()+r.get_width()/2, r.get_height(),
-                    VALUE_FORMAT.format(v), ha="center", va="bottom",
-                    fontsize=VALUE_FONT_SIZE)
-
-def scenario_p90(folder_path):
-    """Extract p90_delay_s values for Bus, CAV, HV from run_summary.csv"""
-    path = os.path.join(folder_path, RUN_SUMMARY_FILE)
-    if not os.path.isfile(path):
-        raise FileNotFoundError(f"Missing run_summary.csv in {folder_path}")
-
-    df = pd.read_csv(path)
-    df["class"] = df["class"].astype(str).str.strip().str.lower()
-
-    bus_val = df.loc[df["class"]=="bus", "p90_delay_s"].mean()
-    cav_val = df.loc[df["class"]=="cav", "p90_delay_s"].mean()
-    hv_val  = df.loc[df["class"]=="reg", "p90_delay_s"].mean()
-
-    return {"Bus": bus_val, "CAV": cav_val, "HV": hv_val}
-
-#Plot
-scenario_labels = []
-data_seconds = []
-
-for folder_name, nice_label in SCENARIOS:
-    folder = os.path.join(BASE_DIR, folder_name)
-    if not os.path.isdir(folder):
-        raise FileNotFoundError(f"Missing scenario folder: {folder}")
-    m = scenario_p90(folder)
-    data_seconds.append([m[v] for v in VEHICLE_TYPES])
-    scenario_labels.append(nice_label)
-
-data_seconds = np.array(data_seconds, dtype=float)  
-data_units, unit_label = _to_units(data_seconds)
-
-n_groups = len(VEHICLE_TYPES)
-n_scen = len(scenario_labels)
-group_width = n_scen * BAR_WIDTH + GROUP_SPACING
-x = np.arange(n_groups) * group_width
-
-plt.figure(figsize=FIGSIZE, dpi=150)
-
-for i, scen_label in enumerate(scenario_labels):
-    vals = data_units[i, :]
-    offsets = (i - (n_scen-1)/2) * BAR_WIDTH
-    bars = plt.bar(
-        x + offsets, vals, width=BAR_WIDTH,
-        label=scen_label,
-        color=COLOR_BY_SCENARIO.get(scen_label, None)
-    )
-    _annotate_bars(plt.gca(), bars, vals)
-
-plt.xlabel(LABELS["x"], fontsize=AXIS_LABEL_SIZE)
-plt.ylabel(LABELS["y"], fontsize=AXIS_LABEL_SIZE)
-
-plt.xticks(x, VEHICLE_TYPES, fontsize=X_TICK_LABEL_SIZE)
-plt.tick_params(axis="y", labelsize=Y_TICK_LABEL_SIZE)
-
-plt.ylim(Y_RANGE[0], Y_RANGE[1])
-_apply_y_ticks(plt.gca(), Y_TICK_INT)
-
-plt.legend(
-    fontsize=LEGEND_FONT_SIZE,
-    loc="upper left",  
-    frameon=False
-)
-plt.tight_layout()
-plt.show()
-
-out = pd.DataFrame(data_units, index=scenario_labels, columns=VEHICLE_TYPES)
-print(f"90th-percentile travel time ({unit_label}):")
-display(out.round(2))
 
 
 def main():
     args = parse_args()
     run(args)
+def generate_plots(args):
+    import os, re
+    import numpy as np
+    import pandas as pd
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MultipleLocator
+
+    mpl.rcParams.update({
+        "font.size": 8,
+        "axes.labelsize": 6,
+        "xtick.labelsize": 6,
+        "ytick.labelsize": 6,
+        "legend.fontsize": 9,
+        "axes.linewidth": 0.6,
+    })
+
+    FIGSIZE = (6, 4)
+    DPI = 150
+    LINEWIDTH = 1.4
+    FONT_LABEL = 14
+    FONT_TICK = 12
+    LEGEND_LOC = "upper left"
+    LEGEND_FONTSIZE = 10
+    LEGEND_FRAME = False
+    GRID_DT = 1.0
+    XTICK_STEP = 600.0
+
+    base_dir = os.path.dirname(os.path.abspath(args.outdir))
+    scen_5_7 = {
+        "Case 1": os.path.join(base_dir, "srp_no_DL"),
+        "Case 2": os.path.join(base_dir, "srp_DL"),
+        "Case 3": os.path.join(base_dir, "drp"),
+        "Case 4": os.path.join(base_dir, "proposed"),
+    }
+    scen_11 = [
+        ("results_case1", "SRP without using joint DL"),
+        ("results_case2", "SRP using joint DL"),
+        ("results_case3", "Proposed method"),
+    ]
+
+    def _load_per(folder):
+        p = os.path.join(folder, "per_vehicle.csv")
+        if not os.path.isfile(p):
+            return None
+        df = pd.read_csv(p)
+        if "class" in df.columns:
+            df["class"] = df["class"].astype(str).str.strip().str.lower()
+        return df
+
+    def _time_window(dfs):
+        vals = []
+        for df in dfs.values():
+            if df is not None and "arrive_s" in df.columns:
+                vals.append(df["arrive_s"].values)
+        if not vals:
+            return 0.0, 0.0
+        allv = np.concatenate(vals)
+        return float(np.nanmin(allv)), float(np.nanmax(allv))
+
+    def _step_at(times, values, t_query):
+        idx = np.searchsorted(times, t_query, side="right") - 1
+        return 0.0 if idx < 0 else values[idx]
+
+    def _to_grid(times, values, t0, t1, dt):
+        g = np.arange(t0, t1 + 1e-9, dt)
+        v = np.array([_step_at(times, values, x) for x in g])
+        return g, v
+
+    def _cum_series(df_sub, value_col, t0, t1):
+        d = df_sub.sort_values("arrive_s").copy()
+        t = [t0]
+        y = [0.0]
+        acc = 0.0
+        for tt, val_s in zip(d["arrive_s"].values, d[value_col].values):
+            if t0 <= tt <= t1:
+                acc += val_s / 60.0
+                t.append(tt)
+                y.append(acc)
+        if t[-1] < t1:
+            t.append(t1)
+            y.append(acc)
+        return np.array(t), np.array(y)
+
+    def _apply_ticks(ax, xstep, ystep, xmin, xmax):
+        if xstep and xstep > 0:
+            ax.set_xticks(np.arange(xmin, xmax + 1e-9, xstep))
+        if ystep and ystep > 0:
+            lo, hi = ax.get_ylim()
+            ax.set_yticks(np.arange(max(0.0, lo), hi + 1e-9, ystep))
+
+    dfs_5_7 = {k: _load_per(v) for k, v in scen_5_7.items()}
+    if any(df is not None for df in dfs_5_7.values()):
+        t0, t1 = _time_window(dfs_5_7)
+        xmin, xmax = 0.0, max(0.0, t1 - t0)
+        series_bus = {}
+        for cname, df in dfs_5_7.items():
+            if df is None:
+                continue
+            need = {"veh", "class", "arrive_s", "travel_s"}
+            if not need.issubset(df.columns):
+                continue
+            sub = df[(df["class"] == "bus") & (df["arrive_s"] >= t0) & (df["arrive_s"] <= t1)].copy()
+            if len(sub) == 0:
+                continue
+            t, y = _cum_series(sub, "travel_s", t0, t1)
+            tg, yg = _to_grid(t, y, t0, t1, GRID_DT)
+            series_bus[cname] = (tg, yg)
+
+        if "Case 1" in series_bus:
+            tg = series_bus["Case 1"][0]
+            y1 = series_bus["Case 1"][1]
+            color_map = {"Case 2": "tab:orange", "Case 4": "tab:blue", "Case 3": "tab:green"}
+            label_map = {"Case 2": "SRP without rerouting", "Case 4": "DRP with rerouting", "Case 3": "Proposed method"}
+            fig, ax = plt.subplots(figsize=FIGSIZE, dpi=DPI)
+            for cname in ["Case 2", "Case 4", "Case 3"]:
+                if cname not in series_bus:
+                    continue
+                y = np.maximum(0.0, series_bus[cname][1] - y1)
+                ax.plot(tg - t0, y, color=color_map.get(cname, None), linewidth=LINEWIDTH, label=label_map.get(cname, cname))
+            ax.set_xlim(xmin, xmax)
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(0, hi)
+            ax.set_xlabel("Time [s]", fontsize=FONT_LABEL)
+            ax.set_ylabel("Cumulative delay [min]", fontsize=FONT_LABEL)
+            ax.tick_params(axis="both", labelsize=FONT_TICK)
+            _apply_ticks(ax, XTICK_STEP, 2.0, xmin, xmax)
+            ax.legend(loc=LEGEND_LOC, fontsize=LEGEND_FONTSIZE, frameon=LEGEND_FRAME)
+            plt.tight_layout()
+            plt.savefig(os.path.join(args.outdir, "fig_5_bus_delta.png"), dpi=DPI)
+            plt.close()
+
+        for cls, ylab in [("cav", "Total travel time [min]"), ("reg", "Total travel time [min]")]:
+            per_case = {}
+            for cname, df in dfs_5_7.items():
+                if df is None:
+                    continue
+                need = {"veh", "class", "arrive_s", "travel_s"}
+                if not need.issubset(df.columns):
+                    continue
+                sub = df[(df["class"] == cls) & (df["arrive_s"] >= t0) & (df["arrive_s"] <= t1)].sort_values("arrive_s")
+                if len(sub) > 0:
+                    per_case[cname] = sub
+            if not per_case:
+                continue
+            n = min(len(x) for x in per_case.values())
+            for c in list(per_case.keys()):
+                if len(per_case[c]) > n:
+                    idx = np.linspace(0, len(per_case[c]) - 1, n, dtype=int)
+                    per_case[c] = per_case[c].iloc[idx, :].copy()
+            color_map = {"Case 2": "tab:orange", "Case 4": "tab:blue", "Case 3": "tab:green"}
+            label_map = {"Case 2": "SRP without rerouting", "Case 4": "DRP with rerouting", "Case 3": "Proposed method"}
+            fig, ax = plt.subplots(figsize=FIGSIZE, dpi=DPI)
+            for cname in ["Case 2", "Case 4", "Case 3"]:
+                if cname not in per_case:
+                    continue
+                t, y = _cum_series(per_case[cname], "travel_s", t0, t1)
+                tg, yg = _to_grid(t, y, t0, t1, GRID_DT)
+                ax.plot(tg - t0, yg, color=color_map.get(cname, None), linewidth=LINEWIDTH, label=label_map.get(cname, cname))
+            ax.set_xlim(xmin, xmax)
+            lo, hi = ax.get_ylim()
+            ax.set_ylim(0, hi)
+            ax.set_xlabel("Time [s]", fontsize=FONT_LABEL)
+            ax.set_ylabel(ylab, fontsize=FONT_LABEL)
+            ax.tick_params(axis="both", labelsize=FONT_TICK)
+            _apply_ticks(ax, XTICK_STEP, None, xmin, xmax)
+            ax.legend(loc=LEGEND_LOC, fontsize=LEGEND_FONTSIZE, frameon=LEGEND_FRAME)
+            plt.tight_layout()
+            fname = "fig_6_cav_tt.png" if cls == "cav" else "fig_7_reg_tt.png"
+            plt.savefig(os.path.join(args.outdir, fname), dpi=DPI)
+            plt.close()
+
+    UNITS = "min"
+    VEHICLE_TYPES = ["Bus", "CAV", "HV"]
+    BAR_WIDTH = 0.28
+    GROUP_SPACING = 0.22
+    AXIS_LABEL_SIZE = 14
+    X_TICK_LABEL_SIZE = 12
+    Y_TICK_LABEL_SIZE = 12
+    LEGEND_FONT_SIZE = 13
+    VALUE_FONT_SIZE = 11
+    SHOW_VALUES = True
+    VALUE_FORMAT = "{:.1f}"
+    Y_TICK_INT = None
+    Y_RANGE = (0, None)
+    COLOR_BY_SCENARIO = {
+        "SRP without using joint DL": "tab:gray",
+        "SRP using joint DL": "tab:orange",
+        "Proposed method": "tab:green",
+    }
+
+    def _to_units(vals):
+        vals = np.asarray(vals, dtype=float)
+        if UNITS.lower().startswith("min"):
+            return vals / 60.0, "min"
+        return vals, "s"
+
+    def _annotate(ax, rects, values):
+        for r, v in zip(rects, values):
+            if SHOW_VALUES and np.isfinite(v):
+                ax.text(r.get_x() + r.get_width() / 2, r.get_height(), VALUE_FORMAT.format(v), ha="center", va="bottom", fontsize=VALUE_FONT_SIZE)
+
+    def _scenario_p90(folder_path):
+        path = os.path.join(folder_path, "run_summary.csv")
+        if not os.path.isfile(path):
+            return None
+        df = pd.read_csv(path)
+        df["class"] = df["class"].astype(str).str.strip().str.lower()
+        bus_val = df.loc[df["class"] == "bus", "p90_delay_s"].mean()
+        cav_val = df.loc[df["class"] == "cav", "p90_delay_s"].mean()
+        hv_val = df.loc[df["class"] == "reg", "p90_delay_s"].mean()
+        return {"Bus": bus_val, "CAV": cav_val, "HV": hv_val}
+
+    data_seconds = []
+    scenario_labels = []
+    for folder_name, nice_label in scen_11:
+        folder = os.path.join(base_dir, folder_name)
+        if not os.path.isdir(folder):
+            continue
+        m = _scenario_p90(folder)
+        if m is None:
+            continue
+        data_seconds.append([m[v] for v in VEHICLE_TYPES])
+        scenario_labels.append(nice_label)
+
+    if scenario_labels:
+        data_seconds = np.array(data_seconds, dtype=float)
+        data_units, unit_label = _to_units(data_seconds)
+        n_groups = len(VEHICLE_TYPES)
+        n_scen = len(scenario_labels)
+        group_width = n_scen * BAR_WIDTH + GROUP_SPACING
+        x = np.arange(n_groups) * group_width
+        plt.figure(figsize=(7, 5), dpi=DPI)
+        for i, scen_label in enumerate(scenario_labels):
+            vals = data_units[i, :]
+            offsets = (i - (n_scen - 1) / 2) * BAR_WIDTH
+            bars = plt.bar(x + offsets, vals, width=BAR_WIDTH, label=scen_label, color=COLOR_BY_SCENARIO.get(scen_label, None))
+            _annotate(plt.gca(), bars, vals)
+        plt.xlabel("", fontsize=AXIS_LABEL_SIZE)
+        plt.ylabel("90th-percentile travel time [" + unit_label + "]", fontsize=AXIS_LABEL_SIZE)
+        plt.xticks(x, VEHICLE_TYPES, fontsize=X_TICK_LABEL_SIZE)
+        plt.tick_params(axis="y", labelsize=Y_TICK_LABEL_SIZE)
+        if Y_RANGE[1] is not None:
+            plt.ylim(Y_RANGE[0], Y_RANGE[1])
+        plt.legend(fontsize=LEGEND_FONT_SIZE, loc="upper left", frameon=False)
+        plt.tight_layout()
+        plt.savefig(os.path.join(args.outdir, "fig_11_p90.png"), dpi=DPI)
+        plt.close()
+    
+    
+ 
 
 if __name__ == "__main__":
     main()
